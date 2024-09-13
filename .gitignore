@@ -1,0 +1,19 @@
+echo "# Conda environment
+conda-env.yml
+
+# Python
+__pycache__/
+*.py[cod]
+*.so
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# IDEs
+.vscode/
+.idea/
+
+# Project specific
+data/
+models/
+logs/" > .gitignore
