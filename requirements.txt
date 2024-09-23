@@ -6,3 +6,4 @@ flake8
 jupyter
 ipykernel
 torchsummary
+pytest 
