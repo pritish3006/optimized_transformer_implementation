@@ -17,3 +17,9 @@ __pycache__/
 data/
 models/
 logs/" > .gitignore
+
+# flake8
+.flake8
+
+# pre-commit config
+.pre-commit-config.yaml
