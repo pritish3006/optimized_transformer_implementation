@@ -1,25 +1,17 @@
-echo "# Conda environment
-conda-env.yml
-
-# Python
+# Ignore Python bytecode and virtual environments
 __pycache__/
 *.py[cod]
-*.so
+*.egg
+*.egg-info/
+.eggs/
+.env
+.venv
+.idea
+.vscode
+.DS_Store
 
-# Jupyter Notebook
-.ipynb_checkpoints
+# Ignore data and model directories
+logs/
 
-# IDEs
-.vscode/
-.idea/
-
-# Project specific
-data/
-models/
-logs/" > .gitignore
-
-# flake8
+# Ignore flake8 config files
 .flake8
-
-# pre-commit config
-.pre-commit-config.yaml

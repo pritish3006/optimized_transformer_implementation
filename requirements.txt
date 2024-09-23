@@ -1,0 +1,9 @@
+# requirements.txt
+torch==2.4
+numpy
+matplotlib
+flake8
+jupyter
+ipykernel
+torchsummary
+pytest 
