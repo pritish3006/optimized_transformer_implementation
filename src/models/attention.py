@@ -71,7 +71,7 @@ class MultiHeadAttention(nn.Module):
 
         self.dropout = nn.Dropout(p=dropout)
 
-    def forward(self, query, key, value, mask=None):
+    def forward(self, query, key, value, mask=None, average_weights=True):
         """
         Args:
             query: tensor of shape (batch_size, seq_len_q, d_model)
@@ -85,29 +85,25 @@ class MultiHeadAttention(nn.Module):
         """
         batch_size = query.size(0)
 
-        # linear projections
-        query = self.linear_q(query)
-        key = self.linear_k(key)
-        value = self.linear_v(value)
+        # Linear projections for query, key, and value
+        query = self.linear_q(query).view(batch_size, -1, self.num_heads, self.d_k).transpose(1, 2)
+        key = self.linear_k(key).view(batch_size, -1, self.num_heads, self.d_k).transpose(1, 2)
+        value = self.linear_v(value).view(batch_size, -1, self.num_heads, self.d_k).transpose(1, 2)
 
-        # reshaping the tensors to (batch_size, num_heads, seq_len, d_k)
-        query = query.view(batch_size, -1, self.num_heads, self.d_k).transpose(1, 2)
-        key = key.view(batch_size, -1, self.num_heads, self.d_k).transpose(1, 2)
-        value = value.view(batch_size, -1, self.num_heads, self.d_k).transpose(1, 2)
-
-        # applying attention to all heads
+        # Adjust the mask dimensions to match (batch_size, num_heads, seq_len_q, seq_len_k)
         if mask is not None:
-            # adjust the mask dimensions to (batch_size, num_heads, seq_len_q, seq_len_k)
-            mask = mask.unsqueeze(1)                        # add a dimension for num_heads
+           mask = mask.unsqueeze(1)                            # Add a new dimension for num_heads
 
+        # Apply scaled dot-product attention independently for each head
         attention_output, attention_weights = self.attention(query, key, value, mask=mask)
 
-        # concatenate the attention heads
-        attention_output = attention_output.transpose(1, 2).contiguous().view(batch_size, -1, self.d_model)
+        # Conditionally average the attention weights
+        if average_weights:
+            attention_weights = attention_weights.mean(dim=1)  # Shape: (batch_size, seq_len, seq_len)
 
-        # final linear layer
+        # Concatenate all the attention outputs and project to d_model
+        attention_output = attention_output.transpose(1, 2).contiguous().view(batch_size, -1, self.num_heads * self.d_k)
         output = self.linear_out(attention_output)
         output = self.dropout(output)
 
-        return output, attention_weights
-            
+        return output, attention_weights 

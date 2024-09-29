@@ -25,12 +25,13 @@ class PositionwiseFeedForward(nn.Module):
         x = self.activation(x)
         logger.debug(f"shape after activation: {x.shape}, value: {x}")
         # applying the dropout layer
-        x = x.dropout(x)
+        x = self.dropout(x)
         logger.debug(f"shape after the dropout layer {x.shape}, value:  {x}")
         # applying the second linear transformation
         x = self.linear2(x)
         logger.debug(f"shape after second lienar transformation: {x.shape}, value: {x}")
 
         return x
+    
 
 

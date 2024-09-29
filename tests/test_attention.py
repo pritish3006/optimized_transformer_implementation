@@ -31,7 +31,7 @@ def test_multi_head_attention():
     mask = torch.zeros(batch_size, seq_len, seq_len).bool()             # no masking
 
     attention = MultiHeadAttention(d_model, num_heads)
-    output, attention_weights = attention(query, key, value, mask=mask)
+    output, attention_weights = attention(query, key, value, mask=mask, average_weights=True)
 
     assert output.shape == (batch_size, seq_len, d_model), "output shape is incorrect"
     assert attention_weights.shape == (batch_size, seq_len, seq_len), "attention weight shape is incorrect"
