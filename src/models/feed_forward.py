@@ -9,6 +9,15 @@ logger = logging.getLogger(__name__)
 class PositionwiseFeedForward(nn.Module):
     """
         defining the positionwise feedforward network used in a transformer
+        the network consists of two linear layers with a ReLU activation in between.
+
+        Args: 
+            d_model (int): dimension of input embeddings and model size
+            d_ff (int): dimension of the inner feed-forward layer (usually larger than d_model)
+            dropout (float): dropout probability applied after activation function
+        Shape:
+            input: (batch_size, seq_len, d_model)
+            output: (batch_size, seq_len, d_model)
     """
     def __init__(self, d_model, d_ff, dropout=0.1):
         super(PositionwiseFeedForward, self).__init__()
@@ -18,6 +27,13 @@ class PositionwiseFeedForward(nn.Module):
         self.dropout = nn.Dropout(p=dropout)
 
     def forward(self, x):
+        """
+        forward pass through the feed-forward network
+        Args:
+            x (tensor): input tensor of shape (batch_size, seq_len, d_model)
+        Returns:
+            tensor: output tensor of shape (batch_size, seq_len, d_model)
+        """
         # apply the first linear transformation
         x = self.linear1(x)
         logger.debug(f"shape after first linear operation: {x.shape}, values: {x}")

@@ -20,3 +20,5 @@ def test_feed_forward():
 
     # check that the feed forward network transforms the input tensor
     assert not torch.equal(output, input_tensor), "Feed forward network performed no transformations on the input tensor"
+
+
