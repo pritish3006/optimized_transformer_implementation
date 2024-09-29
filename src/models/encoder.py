@@ -3,6 +3,7 @@ import torch.nn as nn
 # importing relevant modules
 from models.attention import MultiHeadAttention
 from models.feed_forward import PositionwiseFeedForward
+from models.embeddings import TransformerEmbedding
 
 class EncoderLayer(nn.Module):
     """
@@ -51,3 +52,39 @@ class EncoderLayer(nn.Module):
         x = self.layer_norm2(x)                                         # apply layer normalization
 
         return x
+    
+class Encoder(nn.Module):
+    """
+    implements the full encoder stack of the transformer
+    Args:
+        num_layers (int): number of encoder layers
+        d_models (int): dimension of the input embeddings and model size
+        num_heads (int): number of attention heads in the multi-head attention mechanism
+        d_ff (int): dimension of the inner feed-forward layer
+        vocab_size (int): size of the input vocabulary
+        mex_len (int): maximum sequence length
+        dropout (float): dropout probability applied after each sub-layer
+    Shape:
+        input: (batch_size, seq_len)
+        output: (batch_size, seq_len, d_model)
+    """
+    def __init__(self, num_layer, d_model, num_heads, d_ff, vocab_size, max_len=5000, dropout=0.1):
+        super(Encoder, self).__init__()
+        self.embedding = TransformerEmbedding(vocab_size, d_model, max_len, dropout)
+        self.layers = nn.ModuleList([EncoderLayer(d_model, num_heads, d_ff, dropout) for _ in range(num_layer)])
+        self.layer_norm = nn.LayerNorm(d_model)
+
+    def forward(self, src, mask=None):
+        """
+        forward pass through the encoder stack
+        Args:
+            src (tensor): input tensor of shape (batch_size, seq_len)
+            mask (tensor, optional): mask tensor of shape (batch_size, seq_len, seq_len)
+        Returns:
+            tensor: output tensor of shape (batch_size, seq_len, d_model)
+        """
+        x = self.embedding(src)
+        for layer in self.layers:
+            x = layer(x, mask)
+        return self.layer_norm(x)
+    
