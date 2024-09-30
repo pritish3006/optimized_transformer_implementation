@@ -1,4 +1,5 @@
 import torch
+import os
 
 def create_masked_padding(seq, pad_token=0):
     """
@@ -26,3 +27,26 @@ def create_look_ahead_mask(size):
     # create a matrix with ones above the main diagonal (look-ahead mask)
     mask = torch.triu(torch.ones((size, size)), diagonal=1).bool()          # true above the diagonal
     return mask                                                             # true value indicates position to be masked
+
+def save_checkpoint(model, optimizer, epoch, loss, checkpoint_dir="checkpoints"):
+    """
+    saves a checkpoint of the model's state including model weights, optimizer state and loss
+    Args:
+        model: transformer model being trained
+        optimizer: the optimizer being used during training
+        epoch: current epoch number
+        loss: training loss at the time of checkpointing
+        checkpoint_dir: directory where checkpoint files will be saved
+    """
+    if not os.path.exists(checkpoint_dir):
+        os.makedirs(checkpoint_dir)                                         # create checkpoint dir if it doesn't already exist
+
+    checkpoint_path = os.path.join(checkpoint_dir, f"checkpoint_epoch_{epoch+1}.pth")
+    torch.save({
+        'epoch': epoch + 1,
+        'model_state_dict': model.state_dict(),
+        'optimizer_state_dict': optimizer.state_dict(),
+        'loss': loss
+    }, checkpoint_path)
+
+    print(f"checkpoint saved: {checkpoint_path}")                
