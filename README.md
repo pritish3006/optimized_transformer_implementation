@@ -8,7 +8,7 @@ This project implements the Transformer model as described in the ["Attention Is
 - **Architecture**: Faithful to the original paper, without specific improvements or additional features.
 - **Current Focus**: Tuning for Apple Silicon and Metal Performance Shaders (transitioning to CUDA-based approach in the future).
 - **Status**: In development and currently being trained.
-- **Dataset**: Using OPUS-100 en-hi dataset for initial experimentation.
+- **Dataset**: Using OPUS-100 en-hi dataset for initial experimentation. OPUS-100 is a multilingual dataset derived from the OPUS collection, containing sentence pairs for 100 language pairs. The en-hi subset consists of English-Hindi parallel sentences, providing a diverse range of text for training and evaluating machine translation models.
 
 ## Main Components
 

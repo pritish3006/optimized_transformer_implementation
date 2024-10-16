@@ -134,7 +134,7 @@ if __name__ == "__main__":
     # Load the dataset using DataLoaderFactory
     train_loader = DataLoaderFactory.get_dataloader(
         data_type="text",
-        text_data=["Sample sentence 1", "Sample sentence 2", "Sample sentence 3"],
+        text_data=["Sample sentence 1", "Sample sentence 2", "Sample sentence 3"],       # TODO: replace with actual dataset
         tokenizer=tokenizer,
         batch_size=32,
         max_len=128
@@ -142,7 +142,7 @@ if __name__ == "__main__":
 
     val_loader = DataLoaderFactory.get_dataloader(
         data_type="text",
-        text_data=["Validation sentence 1", "Validation sentence 2"],
+        text_data=["Validation sentence 1", "Validation sentence 2"],                   # TODO: replace with actual dataset  
         tokenizer=tokenizer,
         batch_size=32,
         max_len=128
