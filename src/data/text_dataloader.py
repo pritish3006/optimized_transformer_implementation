@@ -18,7 +18,7 @@ class TextDataset(Dataset):
         text = self.text_data[idx]
         tokens = self.tokenizer(
             text,
-            truncation=True,
+            truncation=False,
             padding='max_length',
             max_length=self.max_len,
             return_tensors='pt'
