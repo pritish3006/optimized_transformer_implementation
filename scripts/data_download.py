@@ -6,7 +6,9 @@ import argparse
 import hashlib
 
 def download_file(url, save_path, chunk_size=8192):
-    """Download a file with progress bar and resume capability."""
+    """
+    Download a file with progress bar and resume capability.
+    """
     file_size = int(requests.head(url).headers.get('Content-Length', 0))
     
     if os.path.exists(save_path):
@@ -33,7 +35,9 @@ def download_file(url, save_path, chunk_size=8192):
     pbar.close()
 
 def get_file_hash(file_path):
-    """Calculate SHA256 hash of a file."""
+    """
+    Calculate SHA256 hash of a file.
+    """
     sha256_hash = hashlib.sha256()
     with open(file_path, "rb") as f:
         for byte_block in iter(lambda: f.read(4096), b""):
@@ -41,7 +45,9 @@ def get_file_hash(file_path):
     return sha256_hash.hexdigest()
 
 def download_dataset(language_pair, base_url, save_directory):
-    """Download dataset files for a given language pair."""
+    """
+    Download dataset files for a given language pair.
+    """
     url = f"{base_url}/{language_pair}/"
     os.makedirs(save_directory, exist_ok=True)
 
