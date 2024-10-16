@@ -13,5 +13,67 @@ __pycache__/
 # Ignore data and model directories
 logs/
 
+# Ignore Jupyter Notebook checkpoints
+.ipynb_checkpoints
+
 # Ignore flake8 config files
 .flake8
+
+# Ignore poetry
+poetry.lock
+
+# Ignore mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Ignore pyre type checker
+.pyre/
+
+# Ignore profiling data
+.prof
+
+# Ignore PyBuilder
+target/
+
+# Ignore pyenv
+.python-version
+
+# Ignore pipenv
+Pipfile.lock
+
+# Ignore pytest cache
+.pytest_cache/
+
+# Ignore coverage reports
+htmlcov/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+
+# Ignore translations
+*.mo
+*.pot
+
+# Ignore distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
