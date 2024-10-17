@@ -26,11 +26,22 @@ class DataLoaderFactory:
             raise ValueError(f"Unsupported data type: {data_type}")
         
     @staticmethod
-    def _get_text_dataloader(text_data, tokenizer, batch_size=32, max_len=512, shuffle=True):
+    def _get_text_dataloader(text_data, tokenizer, batch_size=32, max_len=512, shuffle=True, is_translation=False):
         """
-        returns the dataloader for the text data
+        Returns the dataloader for the text data.
+        If is_translation is True, text_data should be a tuple of (src_text_data, tgt_text_data).
+        Otherwise, text_data should be a single list of text data.
         """
-        text_loader = TextDataLoader(text_data=text_data, tokenizer=tokenizer, batch_size=batch_size, max_len=max_len, shuffle=shuffle)
+        if is_translation:
+            if not isinstance(text_data, tuple) or len(text_data) != 2:
+                raise ValueError("For translation tasks, text_data should be a tuple of (src_text_data, tgt_text_data)")
+            src_text_data, tgt_text_data = text_data
+        else:
+            src_text_data = text_data
+            tgt_text_data = None
+
+        text_loader = TextDataLoader(src_text_data=src_text_data, tgt_text_data=tgt_text_data, 
+                                     tokenizer=tokenizer, batch_size=batch_size, max_len=max_len, shuffle=shuffle)
         return text_loader.load_data()
     
     @staticmethod
@@ -38,12 +49,11 @@ class DataLoaderFactory:
         """
         returns the image dataloader (TODO: for future use)
         """
-        raise NotImplementedError(f"dataloader not implemented")
+        raise NotImplementedError("image dataloader not implemented")
     
     @staticmethod
     def _get_pattern_dataloader(data_file, batch_size=32, shuffle=True):
         """
-        returns the dataloader for pattern/structured data (TODO: for future use)
+        Returns the dataloader for pattern/structured data (TODO: for future use)
         """
-        raise NotImplementedError(f"dataloader not implemented")
-    
+        raise NotImplementedError("pattern dataloader not implemented")

@@ -52,7 +52,7 @@ class PositionalEncoding(nn.Module):
         return x    
 class TransformerEmbedding(nn.Module):
     """
-        implementing transformer embeddings
+    implementing transformer embeddings
     """
     def __init__(self, vocab_size, d_model, max_len=5000, dropout=0.1):
         super(TransformerEmbedding, self).__init__()

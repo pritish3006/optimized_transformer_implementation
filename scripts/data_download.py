@@ -119,7 +119,7 @@ def main():
 
     # Set the base URL and save directory
     base_url = "https://data.statmt.org/opus-100-corpus/v1.0/supervised/"
-    save_directory = os.path.join(os.getcwd(), "data", args.language)
+    save_directory = os.path.join(os.getcwd(), "../data/raw/", args.language)
     
     print(f"Base URL: {base_url}")
     print(f"Save directory: {save_directory}")
