@@ -254,8 +254,8 @@ def train(model, train_loader, val_loader, epochs, optimizer, criterion, device,
 if __name__ == "__main__":
     device = torch.device('mps' if torch.backends.mps.is_available() else 'cuda' if torch.cuda.is_available() else 'cpu')
     
-    # Load the tokenizer
-    tokenizer = BertTokenizer.from_pretrained('bert-base-multilingual-uncased')
+    # Load the tokenizer (BPE tokenizer within AutoTokenizer)
+    tokenizer = AutoTokenizer.from_pretrained('gpt2')  # GPT-2 uses BPE tokenization
     
     # Load the dataset using DataLoaderFactory
     train_loader = DataLoaderFactory.get_dataloader(
@@ -281,15 +281,16 @@ if __name__ == "__main__":
         d_model=512,           # Dimensionality of the model
         num_heads=8,           # Number of attention heads
         d_ff=2048,             # Dimensionality of feedforward layers
-        src_vocab_size=10000,  # Source vocabulary size
-        tgt_vocab_size=10000   # Target vocabulary size
+        src_vocab_size=tokenizer.vocab_size,  # Source vocabulary size
+        tgt_vocab_size=tokenizer.vocab_size   # Target vocabulary size
     )
 
     # Move the model to the chosen device (GPU if available, otherwise CPU)
     model.to(device)
 
     # Set up optimizer and loss function
-    criterion = nn.CrossEntropyLoss(ignore_index=0)  # Ignore padding index in loss calculation
+    criterion = nn.CrossEntropyLoss(ignore_index=tokenizer.pad_token_id)  # Ignore padding index in loss calculation
     optimizer = Adam(model.parameters(), lr=0.001)
     # Set the number of training epochs
-    train(model, train_loader, val_loader, epochs=10, optimizer=optimizer, criterion=criterion, device=device, tokenizer=tokenizer)
+    train(model, train_loader, val_loader, epochs=1, optimizer=optimizer, criterion=criterion, device=device, tokenizer=tokenizer)
+ 
