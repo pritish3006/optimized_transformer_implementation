@@ -16,8 +16,11 @@ class TextDataset(Dataset):
         return len(self.src_text_data)
     
     def __getitem__(self, idx):
-        src_text = self.src_text_data[idx]
-        src_tokens = self.tokenizer.encode_plus(
+        src_text = self.src_text_data[idx].strip()  # Add strip() to remove any leading/trailing whitespace
+        print(f"source text at index: {idx}: {src_text}")
+        print(f"tokenizer type: {type(self.tokenizer)}")
+        print(f"tokenizer vocab size: {self.tokenizer.vocab_size}")
+        src_tokens = self.tokenizer(
             src_text,
             max_length=self.max_len,
             padding='max_length',
@@ -28,8 +31,8 @@ class TextDataset(Dataset):
         src_attention_mask = src_tokens['attention_mask'].squeeze(0)
 
         if self.tgt_text_data is not None:
-            tgt_text = self.tgt_text_data[idx]
-            tgt_tokens = self.tokenizer.encode_plus(
+            tgt_text = self.tgt_text_data[idx].strip()  # Add strip() to remove any leading/trailing whitespace
+            tgt_tokens = self.tokenizer(
                 tgt_text,
                 max_length=self.max_len,
                 padding='max_length',
@@ -62,5 +65,5 @@ class TextDataLoader:
         # Create TextDataset instance for source and target data
         dataset = TextDataset(self.src_text_data, self.tgt_text_data, self.tokenizer, max_len=self.max_len)
         
-        # create and return a DataLoader with the dataset
-        return DataLoader(dataset, batch_size=self.batch_size, shuffle=self.shuffle)
+        # Instead of returning a DataLoader, return the dataset
+        return dataset
