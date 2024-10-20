@@ -14,9 +14,6 @@ __pycache__/
 logs/
 Datasets/
 
-# ignore the weights and biases logging directory
-wandb/
-
 # Ignore Jupyter Notebook checkpoints
 .ipynb_checkpoints
 

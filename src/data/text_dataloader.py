@@ -1,10 +1,10 @@
 import torch
 from torch.utils.data import Dataset, DataLoader
-from transformers import AutoTokenizer
+from transformers import BertTokenizer                                          # using BertTokenizer from HF tokenizers
 
 class TextDataset(Dataset):
     """
-    dataset class for tokenized text data using AutoTokenizer
+    dataset class for tokenized text data using BertTokenizer
     """
     def __init__(self, src_text_data, tgt_text_data, tokenizer, max_len=512):
         self.src_text_data = src_text_data
@@ -16,27 +16,24 @@ class TextDataset(Dataset):
         return len(self.src_text_data)
     
     def __getitem__(self, idx):
-        src_text = self.src_text_data[idx].strip()  # Add strip() to remove any leading/trailing whitespace
-        print(f"source text at index: {idx}: {src_text}")
-        print(f"tokenizer type: {type(self.tokenizer)}")
-        print(f"tokenizer vocab size: {self.tokenizer.vocab_size}")
+        src_text = self.src_text_data[idx]
         src_tokens = self.tokenizer(
             src_text,
-            max_length=self.max_len,
-            padding='max_length',
             truncation=True,
+            padding='max_length',
+            max_length=self.max_len,
             return_tensors='pt'
         )
-        src_input_ids = src_tokens['input_ids'].squeeze(0)
-        src_attention_mask = src_tokens['attention_mask'].squeeze(0)
+        src_input_ids = src_tokens['input_ids'].squeeze(0)                      # remove the batch dimension
+        src_attention_mask = src_tokens['attention_mask'].squeeze(0)            # remove the batch dimensions from the attention
 
         if self.tgt_text_data is not None:
-            tgt_text = self.tgt_text_data[idx].strip()  # Add strip() to remove any leading/trailing whitespace
+            tgt_text = self.tgt_text_data[idx]
             tgt_tokens = self.tokenizer(
                 tgt_text,
-                max_length=self.max_len,
-                padding='max_length',
                 truncation=True,
+                padding='max_length',
+                max_length=self.max_len,
                 return_tensors='pt'
             )
             tgt_input_ids = tgt_tokens['input_ids'].squeeze(0)
@@ -47,16 +44,20 @@ class TextDataset(Dataset):
 
 class TextDataLoader:
     """
-    dataloader subclass for text data using AutoTokenizer
+    dataloader subclass for text data using BertTokenizer
     """
-    def __init__(self, src_text_data, tgt_text_data, tokenizer, batch_size=32, max_len=512, shuffle=True):
+    def __init__(self, src_text_data, tgt_text_data, batch_size=32, max_len=512, shuffle=True):
         # Store input data and parameters
         self.src_text_data = src_text_data
         self.tgt_text_data = tgt_text_data
         self.batch_size = batch_size
         self.max_len = max_len
         self.shuffle = shuffle
-        self.tokenizer = tokenizer
+
+        
+        # Initialize the tokenizer
+        self.tokenizer = BertTokenizer.from_pretrained('bert-base-multilingual-uncased')
+
 
     def load_data(self):
         """
@@ -65,5 +66,6 @@ class TextDataLoader:
         # Create TextDataset instance for source and target data
         dataset = TextDataset(self.src_text_data, self.tgt_text_data, self.tokenizer, max_len=self.max_len)
         
-        # Instead of returning a DataLoader, return the dataset
-        return dataset
+        # create and return a DataLoader with the dataset
+        return DataLoader(dataset, batch_size=self.batch_size, shuffle=self.shuffle)
+

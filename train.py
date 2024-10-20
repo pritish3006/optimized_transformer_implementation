@@ -1,9 +1,8 @@
 import torch
 import torch.nn as nn
 from torch.optim import Adam
-from transformers import AutoTokenizer, Trainer, TrainerCallback, TrainingArguments, get_linear_schedule_with_warmup
+from transformers import BertTokenizer
 from src.models.transformer import Transformer
-from src.data.text_dataloader import TextDataLoader
 from src.data.dataloader_factory import DataLoaderFactory
 from src.utils.helpers import create_look_ahead_mask, create_masked_padding, save_checkpoint
 import logging
@@ -16,40 +15,33 @@ from rouge import Rouge
 from torchmetrics.text import BLEUScore, CharErrorRate
 from torchmetrics import Precision, Recall, F1Score, Accuracy, Perplexity
 import numpy as np
-from torch.utils.data import Dataset
-from accelerate import Accelerator
-from accelerate.utils import set_seed
-import nltk
-
-nltk.download('punkt')
 
 # Initialize wandb
 wandb.init(project="transformer_training", config={
     "learning_rate": 1e-4,
     "batch_size": 32,
     "epochs": 10,
+    # Add other hyperparameters here
 })
-
-# initialize accelerator
-accelerator = Accelerator()
 
 # Setup model checkpointing
 checkpoint_dir = Path("checkpoints")
 checkpoint_dir.mkdir(exist_ok=True)
 
+# Function to save model checkpoint with wandb
+def save_model_checkpoint(model, optimizer, epoch, loss):
+    checkpoint_path = checkpoint_dir / f"model_epoch_{epoch}.pt"
+    torch.save({
+        'epoch': epoch,
+        'model_state_dict': model.state_dict(),
+        'optimizer_state_dict': optimizer.state_dict(),
+        'loss': loss,
+    }, checkpoint_path)
+    wandb.save(str(checkpoint_path))  # Log the checkpoint file to wandb
+
 # Setting up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-# implementing a custom callback to log all metrics
-class MultiMetricCallback(TrainerCallback):
-    def on_evaluate(self, args, state, control, metrics, **kwargs):
-        if state.is_world_process_zero:
-            print(f"epoch {state.epoch}: metrics: {metrics}")
-            for metric_name, value in metrics.items():
-                if metric_name != "epoch":
-                    wandb.log({f"eval/{metric_name}": value}, step=state.global_step)
-
 
 def calculate_metrics(output, target, tokenizer):
     # Convert output probabilities to token ids
@@ -111,53 +103,176 @@ def calculate_metrics(output, target, tokenizer):
         'perplexity': ppl
     }
 
-def compute_metrics(eval_pred):
-    logits, labels = eval_pred
-    predictions = np.argmax(logits, axis=-1)
-    metrics = calculate_metrics(torch.tensor(logits), torch.tensor(labels), tokenizer) 
+def train_epoch(model, data_loader, optimizer, criterion, device, tokenizer):
+    """
+    Train the model for one epoch.
+    
+    Args:
+        model: The Transformer model being trained.
+        data_loader: The DataLoader providing the training data.
+        optimizer: The optimizer used for backpropagation.
+        criterion: Loss function for training.
+        device: The device (CPU or GPU) to run the training on.
+        tokenizer: The tokenizer used for decoding predictions.
+    
+    Returns:
+        The average loss and metrics over the entire epoch.
+    """
+    model.train()  # Set the model to training mode
+    total_loss = 0.0  # Initialize total loss for this epoch
+    all_metrics = {}
 
-    # compute a weighted combined score for best model performance
-    combined_score = (
-        0.3 * metrics['bleu'] +
-        0.1 * metrics['rouge']['rouge-l']['f'] +
-        0.25 * metrics['meteor'] +
-        0.35 * (1 / metrics['perplexity'])  # Invert perplexity as lower is better
-    )
+    for batch_idx, (src, tgt) in enumerate(data_loader):
+        src, tgt = src.to(device), tgt.to(device)
 
-    metrics['combined_score'] = combined_score
-    return metrics
+        # Prepare input and target sequences for the decoder
+        tgt_input = tgt[:, :-1]  # Exclude the last token for decoder input
+        tgt_output = tgt[:, 1:]  # Shift the target sequence by one for the decoder output
+
+        # Generate masks
+        src_mask = create_masked_padding(src)  # Masking for source input
+        tgt_padding_mask = create_masked_padding(tgt_input)  # Masking for target input
+        tgt_look_ahead_mask = create_look_ahead_mask(tgt_input.size(1))  # Look-ahead mask for the decoder
+        tgt_mask = tgt_padding_mask & tgt_look_ahead_mask  # Combine padding and look-ahead masks
+
+        # Zero out the gradients before each forward pass
+        optimizer.zero_grad()
+
+        # Forward pass through the model
+        output = model(src, tgt_input, src_mask, tgt_mask)
+
+        # Compute the loss
+        loss = criterion(output.view(-1, output.size(-1)), tgt_output.view(-1))
+        total_loss += loss.item()
+
+        # Calculate metrics
+        batch_metrics = calculate_metrics(output, tgt_output, tokenizer)
+        for key, value in batch_metrics.items():
+            all_metrics[key] = all_metrics.get(key, 0) + value
+
+        # Backpropagation and optimization
+        loss.backward()
+        optimizer.step()
+
+        # Log metrics every 100 batches
+        if batch_idx % 100 == 0:
+            wandb.log({f"train_{k}": v for k, v in batch_metrics.items()})
+
+    # Calculate average metrics
+    avg_metrics = {k: v / len(data_loader) for k, v in all_metrics.items()}
+    avg_loss = total_loss / len(data_loader)
+
+    # Log average metrics for the epoch
+    wandb.log({"train_loss": avg_loss, **{f"train_{k}": v for k, v in avg_metrics.items()}})
+
+    return avg_loss, avg_metrics
+
+
+def validate_epoch(model, data_loader, criterion, device, tokenizer):
+    """
+    Validate the model for one epoch (no gradient computation).
+    
+    Args:
+        model: The Transformer model being validated.
+        data_loader: The DataLoader providing the validation data.
+        criterion: Loss function for validation.
+        device: The device (CPU or GPU) to run the validation on.
+        tokenizer: The tokenizer used for decoding predictions.
+    
+    Returns:
+        The average validation loss and metrics over the entire epoch.
+    """
+    model.eval()  # Set the model to evaluation mode
+    total_loss = 0.0  # Initialize total validation loss
+    all_metrics = {}
+
+    with torch.no_grad():  # Disable gradient computation for validation
+        for src, tgt in data_loader:
+            src, tgt = src.to(device), tgt.to(device)
+
+            # Prepare input and target sequences for the decoder
+            tgt_input = tgt[:, :-1]
+            tgt_output = tgt[:, 1:]
+
+            # Generate masks
+            src_mask = create_masked_padding(src)
+            tgt_padding_mask = create_masked_padding(tgt_input)
+            tgt_look_ahead_mask = create_look_ahead_mask(tgt_input.size(1))
+            tgt_mask = tgt_padding_mask & tgt_look_ahead_mask
+
+            # Forward pass
+            output = model(src, tgt_input, src_mask, tgt_mask)
+            loss = criterion(output.view(-1, output.size(-1)), tgt_output.view(-1))
+            total_loss += loss.item()
+
+            # Calculate metrics
+            batch_metrics = calculate_metrics(output, tgt_output, tokenizer)
+            for key, value in batch_metrics.items():
+                all_metrics[key] = all_metrics.get(key, 0) + value
+
+    # Calculate average metrics
+    avg_metrics = {k: v / len(data_loader) for k, v in all_metrics.items()}
+    avg_loss = total_loss / len(data_loader)
+
+    # Log average metrics for the validation
+    wandb.log({"val_loss": avg_loss, **{f"val_{k}": v for k, v in avg_metrics.items()}})
+
+    return avg_loss, avg_metrics
+
+
+def train(model, train_loader, val_loader, epochs, optimizer, criterion, device, tokenizer, checkpoint_dir="checkpoints"):
+    """
+    Train the model for a specified number of epochs, including validation and checkpointing.
+    
+    Args:
+        model: The Transformer model being trained.
+        train_loader: DataLoader providing the training data.
+        val_loader: DataLoader providing the validation data.
+        epochs: Number of training epochs.
+        optimizer: Optimizer for backpropagation.
+        criterion: Loss function for training and validation.
+        device: The device (CPU or GPU) to run the training on.
+        tokenizer: The tokenizer used for decoding predictions.
+        checkpoint_dir: Directory where model checkpoints will be saved.
+    """
+    for epoch in range(epochs):
+        # Training for one epoch
+        train_loss, train_metrics = train_epoch(model, train_loader, optimizer, criterion, device, tokenizer)
+        
+        # Validation after each epoch
+        val_loss, val_metrics = validate_epoch(model, val_loader, criterion, device, tokenizer)
+
+        logger.info(f"Epoch {epoch+1}/{epochs}")
+        logger.info(f"Train Loss: {train_loss:.4f}, Validation Loss: {val_loss:.4f}")
+        logger.info(f"Train Metrics: {train_metrics}")
+        logger.info(f"Validation Metrics: {val_metrics}")
+
+        # Save the model checkpoint
+        save_model_checkpoint(model, optimizer, epoch, train_loss)
 
 
 if __name__ == "__main__":
-    set_seed(42)
-    device = accelerator.device
+    device = torch.device('mps' if torch.backends.mps.is_available() else 'cuda' if torch.cuda.is_available() else 'cpu')
     
-    # Load the tokenizer (BPE tokenizer within AutoTokenizer)
-    tokenizer = AutoTokenizer.from_pretrained('gpt2')  # GPT-2 uses BPE tokenization
-    tokenizer.pad_token = tokenizer.eos_token  # Set the padding token to the end-of-sequence token
+    # Load the tokenizer
+    tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
     
-    with open('Datasets/raw/en-hi/opus.en-hi-train.en', 'r') as f:
-        src_text_data = f.readlines()
-    with open('Datasets/raw/en-hi/opus.en-hi-train.hi', 'r') as f:
-        tgt_text_data = f.readlines()
-
-    train_dataset = TextDataLoader(
-        src_text_data=src_text_data,
-        tgt_text_data=tgt_text_data,
+    # Load the dataset using DataLoaderFactory
+    train_loader = DataLoaderFactory.get_dataloader(
+        data_type="text",
+        text_data=["Sample sentence 1", "Sample sentence 2", "Sample sentence 3"],       # TODO: replace with actual dataset
         tokenizer=tokenizer,
         batch_size=32,
-        max_len=128,
-        shuffle=True
-    ).load_data()
+        max_len=128
+    )
 
-    val_dataset = TextDataLoader(
-        src_text_data=open('Datasets/raw/en-hi/opus.en-hi-dev.en', 'r').readlines(),
-        tgt_text_data=open('Datasets/raw/en-hi/opus.en-hi-dev.hi', 'r').readlines(),
+    val_loader = DataLoaderFactory.get_dataloader(
+        data_type="text",
+        text_data=["Validation sentence 1", "Validation sentence 2"],                   # TODO: replace with actual dataset  
         tokenizer=tokenizer,
         batch_size=32,
-        max_len=128,
-        shuffle=False
-    ).load_data()
+        max_len=128
+    )
 
     # Initialize the Transformer model
     model = Transformer(
@@ -166,64 +281,16 @@ if __name__ == "__main__":
         d_model=512,           # Dimensionality of the model
         num_heads=8,           # Number of attention heads
         d_ff=2048,             # Dimensionality of feedforward layers
-        src_vocab_size=tokenizer.vocab_size,  # Source vocabulary size
-        tgt_vocab_size=tokenizer.vocab_size   # Target vocabulary size
+        src_vocab_size=10000,  # Source vocabulary size
+        tgt_vocab_size=10000   # Target vocabulary size
     )
 
     # Move the model to the chosen device (GPU if available, otherwise CPU)
     model.to(device)
 
-    # defining the optimizer and scheduler
-    optimizer = Adam(model.parameters(), lr=1e-5)
+    # Set up optimizer and loss function
+    criterion = nn.CrossEntropyLoss(ignore_index=0)  # Ignore padding index in loss calculation
+    optimizer = Adam(model.parameters(), lr=0.001)
 
-    # prepare the training setup with accelerator
-    model, optimizer, train_dataset, val_dataset = accelerator.prepare(model, optimizer, train_dataset, val_dataset)
-
-
-    num_training_steps = len(train_dataset) * 1 // 32                                                                               # for 1 epoch, batch size 32 - hardcoded
-    scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=500, num_training_steps=num_training_steps)
-
-    # Set up training arguments
-    training_args = TrainingArguments(
-        output_dir="results",
-        num_train_epochs=1,
-        per_device_train_batch_size=16,
-        per_device_eval_batch_size=16,
-        gradient_accumulation_steps=2,
-        warmup_steps=500,
-        weight_decay=0.001,
-        logging_dir="logs",
-        logging_steps=10,
-        eval_strategy="epoch",
-        save_strategy="epoch",
-        metric_for_best_model="combined_score",
-        load_best_model_at_end=True,
-        report_to="wandb"
-    )
-
-    # Initialize the Trainer
-    trainer = Trainer(
-        model=model,
-        args=training_args,
-        train_dataset=train_dataset,
-        eval_dataset=val_dataset,
-        optimizers=(optimizer, scheduler),
-        compute_metrics=compute_metrics,
-        callbacks=[MultiMetricCallback()]
-    )
-
-    # Train the model
-    trainer.train()
-
-    # Evaluate the model
-    eval_results = trainer.evaluate()
-    logger.info(f"Evaluation results: {eval_results}")
-
-    # Save the model
-    accelerator.wait_for_everyone()
-    unwrapped_model = accelerator.unwrap_model(model)
-    unwrapped_model.save_pretrained("model_save")
-    trainer.save_model("trainer_save")
-
-    # End wandb run
-    wandb.finish()
+    # Set the number of training epochs
+    train(model, train_loader, val_loader, epochs=10, optimizer=optimizer, criterion=criterion, device=device, tokenizer=tokenizer)
