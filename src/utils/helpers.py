@@ -13,6 +13,7 @@ def create_masked_padding(seq, pad_token=0):
     """
     # creating a mask where true indicates positions that are padded tokens
     mask = (seq == pad_token).unsqueeze(1).unsqueeze(2)                     # shape: (batch_size, 1, 1, seq_len)
+    print(f"mask shape in create_masked_padding: {mask.shape}")
     return mask                                                             # trie where pad tokens are present (dtype torch.bool)
 
 def create_look_ahead_mask(size):
@@ -26,6 +27,7 @@ def create_look_ahead_mask(size):
     """
     # create a matrix with ones above the main diagonal (look-ahead mask)
     mask = torch.triu(torch.ones((size, size)), diagonal=1).bool()          # true above the diagonal
+    print(f"mask shape in create_look_ahead_mask: {mask.shape}")
     return mask                                                             # true value indicates position to be masked
 
 def save_checkpoint(model, optimizer, epoch, loss, checkpoint_dir="checkpoints"):

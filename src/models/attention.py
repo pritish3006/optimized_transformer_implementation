@@ -16,6 +16,9 @@ class ScaledDotProductAttention(nn.Module):
 
     def forward(self, query, key, value, mask=None):
         """
+
+        implement the scaled dot-product attention mechanism
+
         Args: 
             query: tensor of shape (..., seq_len_q, d_k)
             key: tensor of shape (..., seq_len_k, d_k)
@@ -27,22 +30,30 @@ class ScaledDotProductAttention(nn.Module):
             attention_weights: tensor of attention weights
         """
         d_k = query.size(-1)
+
         # compute the scaled dot-products
         scores = torch.matmul(query, key.transpose(-2, -1)) / math.sqrt(d_k)
         logger.debug(f"scores shape: {scores.shape}")
+        print(f"score shape before masking: {scores.shape}")
 
         # apply mask if provided
         if mask is not None:
+            # Ensure mask has the correct shape
+            if mask.dim() == 3:
+                mask = mask.unsqueeze(1)  # Add head dimension if not present
             # mask where mask is true (masked positions are the positions that need to be ignored)
             scores = scores.masked_fill(mask, float('-inf'))
+        print(f"scores shape after masking: {scores.shape}")
 
         # compute the attention weights
         attention_weights = F.softmax(scores, dim=-1)
-        logger.debug(f"arrention weights shape: {attention_weights.shape}")
+        logger.debug(f"attention weights shape: {attention_weights.shape}")
+        print(f"attention weights: {attention_weights.shape}")
 
         # apply attention weights to values
         output = torch.matmul(attention_weights, value)
         logger.debug(f"output shape: {output.shape}")
+        print(f"output: {output.shape}")
 
         return output, attention_weights
     
@@ -71,7 +82,7 @@ class MultiHeadAttention(nn.Module):
 
         self.dropout = nn.Dropout(p=dropout)
 
-    def forward(self, query, key, value, mask=None, average_weights=True):
+    def forward(self, query, key, value, mask=None, average_attn_weights=True):
         """
         Args:
             query: tensor of shape (batch_size, seq_len_q, d_model)
@@ -87,23 +98,43 @@ class MultiHeadAttention(nn.Module):
 
         # Linear projections for query, key, and value
         query = self.linear_q(query).view(batch_size, -1, self.num_heads, self.d_k).transpose(1, 2)
+        print(f"query shape: {query.shape}")
         key = self.linear_k(key).view(batch_size, -1, self.num_heads, self.d_k).transpose(1, 2)
+        print(f"key shape: {key.shape}")
         value = self.linear_v(value).view(batch_size, -1, self.num_heads, self.d_k).transpose(1, 2)
+        print(f"value shape: {value.shape}")
 
         # Adjust the mask dimensions to match (batch_size, num_heads, seq_len_q, seq_len_k)
         if mask is not None:
-           mask = mask.unsqueeze(1)                            # Add a new dimension for num_heads
+            print(f"mask shape in multihead attention: {mask.shape}")
+            mask = mask.unsqueeze(1).expand(-1, self.num_heads, -1, -1)               # Add a new dimension for num_heads
 
         # Apply scaled dot-product attention independently for each head
         attention_output, attention_weights = self.attention(query, key, value, mask=mask)
 
-        # Conditionally average the attention weights
-        if average_weights:
-            attention_weights = attention_weights.mean(dim=1)  # Shape: (batch_size, seq_len, seq_len)
+        # conditionally average the attention weights
+        #if average_attn_weights:
+        #    attention_weights = attention_weights.mean(dim=1)  # shape (batch_size, seq_len_q, seq_len_k)
+        
+        # add debug prints
+        print(f"Attention weights shape: {attention_weights.shape}")
 
+        # Add debug prints
+        print(f"MultiHeadAttention input shape: {query.shape}")
+        
+        # After attention computation
+        print(f"Attention output shape before reshaping: {attention_output.shape}")
+        
+        # After reshaping
+        print(f"Attention output shape after reshaping: {attention_output.shape}")
+        
         # Concatenate all the attention outputs and project to d_model
-        attention_output = attention_output.transpose(1, 2).contiguous().view(batch_size, -1, self.num_heads * self.d_k)
+        attention_output = attention_output.transpose(1, 2).contiguous().view(batch_size, -1, self.d_model)
+        print(f"Attention output shape after reshaping: {attention_output.shape}")
+
         output = self.linear_out(attention_output)
+        print(f"Output shape after linear projection: {output.shape}")
         output = self.dropout(output)
+        print(f"Output shape after dropout: {output.shape}")
 
         return output, attention_weights 
