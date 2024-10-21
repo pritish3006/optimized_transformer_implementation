@@ -1,9 +1,11 @@
 import torch
 import torch.nn as nn
 from torch.optim import Adam
+from torch.optim.lr_scheduler import LambdaLR
 from transformers import BertTokenizer
 from src.models.transformer import Transformer
 from src.data.dataloader_factory import DataLoaderFactory
+from accelerate import Accelerator
 from src.utils.helpers import create_look_ahead_mask, create_masked_padding, save_checkpoint
 import logging
 import wandb
@@ -29,13 +31,37 @@ checkpoint_dir = Path("checkpoints")
 checkpoint_dir.mkdir(exist_ok=True)
 
 # Function to save model checkpoint with wandb
-def save_model_checkpoint(model, optimizer, epoch, loss):
-    checkpoint_path = checkpoint_dir / f"model_epoch_{epoch}.pt"
+def save_model_checkpoint(model, optimizer, scheduler, epoch, loss, total_steps):
+    """
+    Save a checkpoint of the model's state during training.
+
+    This function saves the model state, optimizer state, scheduler state,
+    current epoch, loss, and total steps to a checkpoint file. It also logs
+    the checkpoint file to Weights & Biases (wandb) for experiment tracking.
+
+    Args:
+        model (nn.Module): The model being trained.
+        optimizer (torch.optim.Optimizer): The optimizer used for training.
+        scheduler (torch.optim.lr_scheduler._LRScheduler): The learning rate scheduler.
+        epoch (int): The current epoch number.
+        loss (float): The current loss value.
+        total_steps (int): The total number of training steps completed.
+
+    Returns:
+        None
+
+    Side effects:
+        - Creates a checkpoint file in the `checkpoint_dir` directory.
+        - Logs the checkpoint file to wandb.
+    """
+    checkpoint_path = checkpoint_dir / f"model_epoch_{epoch}_steps_{total_steps}.pt"
     torch.save({
         'epoch': epoch,
         'model_state_dict': model.state_dict(),
         'optimizer_state_dict': optimizer.state_dict(),
+        'scheduler_state_dict': scheduler.state_dict(),
         'loss': loss,
+        'total_steps': total_steps,
     }, checkpoint_path)
     wandb.save(str(checkpoint_path))  # Log the checkpoint file to wandb
 
@@ -103,7 +129,14 @@ def calculate_metrics(output, target, tokenizer):
         'perplexity': ppl
     }
 
-def train_epoch(model, data_loader, optimizer, criterion, device, tokenizer):
+def get_transformer_scheduler(optimizer, d_model, warmup_steps):
+    def lr_lambda(step):
+        if step == 0:
+            return 0
+        return d_model ** (-0.5) * min(step ** (-0.5), step * warmup_steps ** (-1.5))
+    return LambdaLR(optimizer, lr_lambda)
+
+def train_epoch(model, data_loader, optimizer, criterion, scheduler, device,tokenizer):
     """
     Train the model for one epoch.
     
@@ -118,27 +151,30 @@ def train_epoch(model, data_loader, optimizer, criterion, device, tokenizer):
     Returns:
         The average loss and metrics over the entire epoch.
     """
-    model.train()  # Set the model to training mode
-    total_loss = 0.0  # Initialize total loss for this epoch
-    all_metrics = {}
+    model.train()                                                                   # Set the model to training mode
+    total_loss = 0.0                                                                # Initialize total loss for this epoch
+    all_metrics = {}    
+    steps = 0
 
     for batch_idx, (src, tgt) in enumerate(data_loader):
-        src, tgt = src.to(device), tgt.to(device)
-
         # Prepare input and target sequences for the decoder
-        tgt_input = tgt[:, :-1]  # Exclude the last token for decoder input
-        tgt_output = tgt[:, 1:]  # Shift the target sequence by one for the decoder output
+        tgt_input = tgt[:, :-1]                                                     # Exclude the last token for decoder input
+        tgt_output = tgt[:, 1:]                                                     # Shift the target sequence by one for the decoder output
 
         # Generate masks
-        src_mask = create_masked_padding(src)  # Masking for source input
-        tgt_padding_mask = create_masked_padding(tgt_input)  # Masking for target input
-        tgt_look_ahead_mask = create_look_ahead_mask(tgt_input.size(1))  # Look-ahead mask for the decoder
-        tgt_mask = tgt_padding_mask & tgt_look_ahead_mask  # Combine padding and look-ahead masks
+        src_mask = create_masked_padding(src)                                       # Masking for source input
+        tgt_padding_mask = create_masked_padding(tgt_input)                         # Masking for target input
+        tgt_look_ahead_mask = create_look_ahead_mask(tgt_input.size(1))             # Look-ahead mask for the decoder
+        tgt_padding_mask = tgt_padding_mask.to(device)                              # Move the padding mask to the device
+        tgt_look_ahead_mask = tgt_look_ahead_mask.to(device)                        # Move the look-ahead mask to the device
+        tgt_mask = tgt_padding_mask & tgt_look_ahead_mask                           # Combine padding and look-ahead masks
 
         # Zero out the gradients before each forward pass
         optimizer.zero_grad()
 
         # Forward pass through the model
+        print(f"Source shape: {src.shape}")                                         # adding print statements to check the shapes of the source input tensors
+        print(f"Target input shape: {tgt_input.shape}")                             # adding print statements to check the shapes of the target input tensors
         output = model(src, tgt_input, src_mask, tgt_mask)
 
         # Compute the loss
@@ -151,8 +187,12 @@ def train_epoch(model, data_loader, optimizer, criterion, device, tokenizer):
             all_metrics[key] = all_metrics.get(key, 0) + value
 
         # Backpropagation and optimization
-        loss.backward()
+        accelerator.backward(loss)
         optimizer.step()
+        scheduler.step()
+        optimizer.zero_grad()
+
+        steps += 1
 
         # Log metrics every 100 batches
         if batch_idx % 100 == 0:
@@ -165,7 +205,7 @@ def train_epoch(model, data_loader, optimizer, criterion, device, tokenizer):
     # Log average metrics for the epoch
     wandb.log({"train_loss": avg_loss, **{f"train_{k}": v for k, v in avg_metrics.items()}})
 
-    return avg_loss, avg_metrics
+    return avg_loss, avg_metrics, steps
 
 
 def validate_epoch(model, data_loader, criterion, device, tokenizer):
@@ -201,8 +241,16 @@ def validate_epoch(model, data_loader, criterion, device, tokenizer):
             tgt_mask = tgt_padding_mask & tgt_look_ahead_mask
 
             # Forward pass
+            # Forward pass through the model
             output = model(src, tgt_input, src_mask, tgt_mask)
+            
+            # Calculate the loss
+            # Reshape the output and target tensors to 2D for the loss calculation
+            # output shape: (batch_size * seq_len, vocab_size)
+            # tgt_output shape: (batch_size * seq_len)
             loss = criterion(output.view(-1, output.size(-1)), tgt_output.view(-1))
+            
+            # Accumulate the total loss for the epoch
             total_loss += loss.item()
 
             # Calculate metrics
@@ -220,7 +268,7 @@ def validate_epoch(model, data_loader, criterion, device, tokenizer):
     return avg_loss, avg_metrics
 
 
-def train(model, train_loader, val_loader, epochs, optimizer, criterion, device, tokenizer, checkpoint_dir="checkpoints"):
+def train(model, train_loader, val_loader, epochs, optimizer, criterion, tokenizer, d_model=512, warmup_steps = 1000, checkpoint_dir="checkpoints"):
     """
     Train the model for a specified number of epochs, including validation and checkpointing.
     
@@ -235,44 +283,121 @@ def train(model, train_loader, val_loader, epochs, optimizer, criterion, device,
         tokenizer: The tokenizer used for decoding predictions.
         checkpoint_dir: Directory where model checkpoints will be saved.
     """
+
+    # initializing accelerator instance
+    accelerator = Accelerator()
+
+    # initializing the scheduler
+    scheduler = get_transformer_scheduler(optimizer, d_model, warmup_steps)
+
+    # prepare the model, optimizer, data loaders, and scheduler to work with the accelerator
+    model, optimizer, train_loader, val_loader, scheduler = accelerator.prepare(
+        model,
+        optimizer,
+        train_loader,
+        val_loader, 
+        scheduler
+    )
+
+    # set the device using the accelerator
+    device = accelerator.device
+
+    best_val_loss = float('inf')
+    total_steps = 0
+
     for epoch in range(epochs):
         # Training for one epoch
-        train_loss, train_metrics = train_epoch(model, train_loader, optimizer, criterion, device, tokenizer)
+        train_loss, train_metrics, steps = train_epoch(model, train_loader, optimizer, criterion, scheduler, device, tokenizer)
+        total_steps += steps
         
         # Validation after each epoch
         val_loss, val_metrics = validate_epoch(model, val_loader, criterion, device, tokenizer)
 
-        logger.info(f"Epoch {epoch+1}/{epochs}")
-        logger.info(f"Train Loss: {train_loss:.4f}, Validation Loss: {val_loss:.4f}")
-        logger.info(f"Train Metrics: {train_metrics}")
-        logger.info(f"Validation Metrics: {val_metrics}")
+        logger.info(f"epoch {epoch+1}/{epochs}")
+        logger.info(f"train loss: {train_loss:.4f}, validation loss: {val_loss:.4f}")
+        logger.info(f"train metrics: {train_metrics}")
+        logger.info(f"validation metrics: {val_metrics}")
+        logger.info(f"current learning rate: {scheduler.get_last_lr()[0]:.6f}")
 
-        # Save the model checkpoint
-        save_model_checkpoint(model, optimizer, epoch, train_loss)
-
+        # Save the model checkpoint if it is the best model so far
+        if val_loss < best_val_loss:
+            best_val_loss = val_loss
+            save_model_checkpoint(model, optimizer, scheduler, epoch, val_loss, total_steps)
 
 if __name__ == "__main__":
-    device = torch.device('mps' if torch.backends.mps.is_available() else 'cuda' if torch.cuda.is_available() else 'cpu')
     
     # Load the tokenizer
-    tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
+    tokenizer = BertTokenizer.from_pretrained('bert-base-multilingual-uncased')
     
-    # Load the dataset using DataLoaderFactory
+    # Define paths to the training source and target files
+    train_src_file_path = 'Datasets/raw/en-hi/opus.en-hi-train.en'
+    train_tgt_file_path = 'Datasets/raw/en-hi/opus.en-hi-train.hi'
+
+    # Load training source and target data
+    try:
+        with open(train_src_file_path, 'r', encoding='utf-8') as src_file, \
+             open(train_tgt_file_path, 'r', encoding='utf-8') as tgt_file:
+            train_src_data = src_file.readlines()
+            train_tgt_data = tgt_file.readlines()
+    except FileNotFoundError as e:
+        logger.error(f"Error loading training dataset: {e}")
+        raise
+
+    # Strip newline characters and remove any empty lines
+    train_src_data = [line.strip() for line in train_src_data if line.strip()]
+    train_tgt_data = [line.strip() for line in train_tgt_data if line.strip()]
+
+    # Log the number of training samples loaded
+    logger.info(f"Loaded {len(train_src_data)} training source samples and {len(train_tgt_data)} training target samples")
+
+    # Create the training dataloader
     train_loader = DataLoaderFactory.get_dataloader(
         data_type="text",
-        text_data=["Sample sentence 1", "Sample sentence 2", "Sample sentence 3"],       # TODO: replace with actual dataset
+        text_data=(train_src_data, train_tgt_data),  # Passing as a tuple for translation task
         tokenizer=tokenizer,
         batch_size=32,
-        max_len=128
+        max_len=128,
+        shuffle=True,  # Shuffle training data
+        is_translation=True  # Indicate that this is a translation task
     )
 
+    # Log the successful creation of the training dataloader
+    logger.info(f"Training dataloader created with {len(train_src_data)} samples")
+
+    # Define paths to the source and target files
+    src_file_path = 'Datasets/raw/en-hi/opus.en-hi-dev.en'
+    tgt_file_path = 'Datasets/raw/en-hi/opus.en-hi-dev.hi'
+
+    # Load source and target data
+    try:
+        with open(src_file_path, 'r', encoding='utf-8') as src_file, \
+             open(tgt_file_path, 'r', encoding='utf-8') as tgt_file:
+            src_data = src_file.readlines()
+            tgt_data = tgt_file.readlines()
+    except FileNotFoundError as e:
+        logger.error(f"Error loading dataset: {e}")
+        raise
+
+    # Strip newline characters and remove any empty lines
+    src_data = [line.strip() for line in src_data if line.strip()]
+    tgt_data = [line.strip() for line in tgt_data if line.strip()]
+
+    # Log the number of samples loaded
+    logger.info(f"Loaded {len(src_data)} source samples and {len(tgt_data)} target samples")
+
+    # Create the validation dataloader
     val_loader = DataLoaderFactory.get_dataloader(
         data_type="text",
-        text_data=["Validation sentence 1", "Validation sentence 2"],                   # TODO: replace with actual dataset  
+        text_data=(src_data, tgt_data),  # Passing as a tuple for translation task
         tokenizer=tokenizer,
         batch_size=32,
-        max_len=128
+        max_len=128,
+        shuffle=False,  # Usually, we don't shuffle validation data
+        is_translation=True  # Indicate that this is a translation task
     )
+
+    # Log the successful creation of the validation dataloader
+    logger.info(f"Validation dataloader created with {len(src_data)} samples")
 
     # Initialize the Transformer model
     model = Transformer(
@@ -281,16 +406,17 @@ if __name__ == "__main__":
         d_model=512,           # Dimensionality of the model
         num_heads=8,           # Number of attention heads
         d_ff=2048,             # Dimensionality of feedforward layers
-        src_vocab_size=10000,  # Source vocabulary size
-        tgt_vocab_size=10000   # Target vocabulary size
+        src_vocab_size=len(tokenizer.vocab),  # Source vocabulary size
+        tgt_vocab_size=len(tokenizer.vocab)   # Target vocabulary size
     )
 
     # Move the model to the chosen device (GPU if available, otherwise CPU)
-    model.to(device)
+    #model.to(device)
 
     # Set up optimizer and loss function
     criterion = nn.CrossEntropyLoss(ignore_index=0)  # Ignore padding index in loss calculation
-    optimizer = Adam(model.parameters(), lr=0.001)
+    optimizer = Adam(model.parameters(), lr=0.001, betas=(0.9, 0.98), eps=1e-9)
 
     # Set the number of training epochs
-    train(model, train_loader, val_loader, epochs=10, optimizer=optimizer, criterion=criterion, device=device, tokenizer=tokenizer)
+    train(model, train_loader, val_loader, epochs=1, optimizer=optimizer, criterion=criterion, tokenizer=tokenizer, d_model=512, warmup_steps=1000)
+

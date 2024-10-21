@@ -38,26 +38,22 @@ class TextDataset(Dataset):
             )
             tgt_input_ids = tgt_tokens['input_ids'].squeeze(0)
             tgt_attention_mask = tgt_tokens['attention_mask'].squeeze(0)
-            return src_input_ids, src_attention_mask, tgt_input_ids, tgt_attention_mask
+            return src_input_ids, tgt_input_ids
         else:
-            return src_input_ids, src_attention_mask
+            return src_input_ids
 
 class TextDataLoader:
     """
     dataloader subclass for text data using BertTokenizer
     """
-    def __init__(self, src_text_data, tgt_text_data, batch_size=32, max_len=512, shuffle=True):
+    def __init__(self, src_text_data, tgt_text_data, tokenizer, batch_size=32, max_len=512, shuffle=True):
         # Store input data and parameters
         self.src_text_data = src_text_data
         self.tgt_text_data = tgt_text_data
+        self.tokenizer = tokenizer
         self.batch_size = batch_size
         self.max_len = max_len
         self.shuffle = shuffle
-
-        
-        # Initialize the tokenizer
-        self.tokenizer = BertTokenizer.from_pretrained('bert-base-multilingual-uncased')
-
 
     def load_data(self):
         """

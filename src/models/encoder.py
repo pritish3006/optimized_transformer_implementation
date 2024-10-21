@@ -1,9 +1,9 @@
 import torch
 import torch.nn as nn
 # importing relevant modules
-from models.attention import MultiHeadAttention
-from models.feed_forward import PositionwiseFeedForward
-from models.embeddings import TransformerEmbedding
+from .attention import MultiHeadAttention
+from .feed_forward import PositionwiseFeedForward
+from .embeddings import TransformerEmbedding
 
 class EncoderLayer(nn.Module):
     """
@@ -42,7 +42,9 @@ class EncoderLayer(nn.Module):
             tensor: output tensor of shape (batch_size, seq_len, d_model)
         """
         # applying multi-head attention with residual connection
+        print(f"Input shape: {x.shape}")
         attention_output, _ = self.self_attention(x, x, x, mask)
+        print(f"Attention output shape: {attention_output.shape}")
         x += self.dropout(attention_output)                             # apply dropout
         x = self.layer_norm1(x)                                         # apply layer normalization
 
@@ -84,6 +86,7 @@ class Encoder(nn.Module):
             tensor: output tensor of shape (batch_size, seq_len, d_model)
         """
         x = self.embedding(src)
+        print(f"Embedding output shape: {x.shape}")
         for layer in self.layers:
             x = layer(x, mask)
         return self.layer_norm(x)
