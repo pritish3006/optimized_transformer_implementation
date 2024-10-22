@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import math
 import logging
+from src.utils.helpers import initialize_weight
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -39,10 +40,17 @@ class ScaledDotProductAttention(nn.Module):
         # apply mask if provided
         if mask is not None:
             # Ensure mask has the correct shape
+
+            # remove extra dimension
+            mask = mask.squeeze(1)
+            print(f"mask shape after squeeze: {mask.shape}")
+
+            # making sure of the correct shape
             if mask.dim() == 3:
-                mask = mask.unsqueeze(1)  # Add head dimension if not present
+                mask = mask.unsqueeze(1)
             # mask where mask is true (masked positions are the positions that need to be ignored)
-            scores = scores.masked_fill(mask, float('-inf'))
+            # apply mask to scores
+            scores = scores.masked_fill_(mask == 1, float('-inf'))
         print(f"scores shape after masking: {scores.shape}")
 
         # compute the attention weights
@@ -82,6 +90,9 @@ class MultiHeadAttention(nn.Module):
 
         self.dropout = nn.Dropout(p=dropout)
 
+        # Initialize weights
+        self.apply(initialize_weight)
+
     def forward(self, query, key, value, mask=None, average_attn_weights=True):
         """
         Args:
@@ -107,7 +118,7 @@ class MultiHeadAttention(nn.Module):
         # Adjust the mask dimensions to match (batch_size, num_heads, seq_len_q, seq_len_k)
         if mask is not None:
             print(f"mask shape in multihead attention: {mask.shape}")
-            mask = mask.unsqueeze(1).expand(-1, self.num_heads, -1, -1)               # Add a new dimension for num_heads
+            mask = mask.unsqueeze(1)#.expand(-1, self.num_heads, -1, -1)               # Add a new dimension for num_heads
 
         # Apply scaled dot-product attention independently for each head
         attention_output, attention_weights = self.attention(query, key, value, mask=mask)

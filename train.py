@@ -1,3 +1,4 @@
+import os
 import torch
 import torch.nn as nn
 from torch.optim import Adam
@@ -21,8 +22,8 @@ import numpy as np
 # Initialize wandb
 wandb.init(project="transformer_training", config={
     "learning_rate": 1e-4,
-    "batch_size": 32,
-    "epochs": 10,
+    "batch_size": 2,
+    "epochs": 1,
     # Add other hyperparameters here
 })
 
@@ -70,6 +71,13 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 def calculate_metrics(output, target, tokenizer):
+    # initialize device
+    device = output.device
+
+    # ensure that everything is on the same device
+    output = output.to(device)
+    target = target.to(device)
+
     # Convert output probabilities to token ids
     pred_tokens = torch.argmax(output, dim=-1)
     
@@ -82,50 +90,50 @@ def calculate_metrics(output, target, tokenizer):
     target_words = [tokenizer.decode(sent, skip_special_tokens=True) for sent in target_tokens]
     
     # Calculate BLEU score
-    bleu = BLEUScore(n_gram=4)
+    bleu = BLEUScore(n_gram=4).to(device)
     bleu_score = bleu(pred_words, [[t] for t in target_words])
     
     # Calculate METEOR score
-    meteor = np.mean([meteor_score([t], p) for p, t in zip(pred_words, target_words)])
+    #meteor = np.mean([meteor_score([t], p) for p, t in zip(pred_words, target_words)])
     
     # Calculate ROUGE score
-    rouge = Rouge()
-    rouge_scores = rouge.get_scores(pred_words, target_words, avg=True)
+    #rouge = Rouge()
+    #rouge_scores = rouge.get_scores(pred_words, target_words, avg=True)
     
     # Calculate TER (Translation Edit Rate)
-    ter = CharErrorRate()
-    ter_score = ter(pred_words, target_words)
+    #ter = CharErrorRate()
+    #ter_score = ter(pred_words, target_words)
     
     # Calculate Precision, Recall, F1
-    precision = Precision(task="multiclass", num_classes=tokenizer.vocab_size)
-    recall = Recall(task="multiclass", num_classes=tokenizer.vocab_size)
-    f1 = F1Score(task="multiclass", num_classes=tokenizer.vocab_size)
+    #precision = Precision(task="multiclass", num_classes=tokenizer.vocab_size)
+    #recall = Recall(task="multiclass", num_classes=tokenizer.vocab_size)
+    #f1 = F1Score(task="multiclass", num_classes=tokenizer.vocab_size)
     
-    precision_score = precision(pred_tokens, target_tokens)
-    recall_score = recall(pred_tokens, target_tokens)
-    f1_score = f1(pred_tokens, target_tokens)
+    #precision_score = precision(pred_tokens, target_tokens)
+    #recall_score = recall(pred_tokens, target_tokens)
+    #f1_score = f1(pred_tokens, target_tokens)
     
     # Calculate Sequence-level and Token-level accuracy
-    seq_accuracy = Accuracy(task="multiclass", num_classes=tokenizer.vocab_size)
-    token_accuracy = Accuracy(task="multiclass", num_classes=tokenizer.vocab_size, average='micro')
+    #seq_accuracy = Accuracy(task="multiclass", num_classes=tokenizer.vocab_size)
+    #token_accuracy = Accuracy(task="multiclass", num_classes=tokenizer.vocab_size, average='micro')
     
-    seq_acc = seq_accuracy(pred_tokens, target_tokens)
-    token_acc = token_accuracy(pred_tokens, target_tokens)
+    #seq_acc = seq_accuracy(pred_tokens, target_tokens)
+    #token_acc = token_accuracy(pred_tokens, target_tokens)
     
     # Calculate Perplexity
-    perplexity = Perplexity()
-    ppl = perplexity(output.view(-1, output.size(-1)), target.view(-1))
+    perplexity = Perplexity().to(device)
+    ppl = perplexity(output, target)
     
     return {
         'bleu': bleu_score,
-        'meteor': meteor,
-        'rouge': rouge_scores,
-        'ter': ter_score,
-        'precision': precision_score,
-        'recall': recall_score,
-        'f1': f1_score,
-        'seq_accuracy': seq_acc,
-        'token_accuracy': token_acc,
+        #'meteor': meteor,
+        #'rouge': rouge_scores,
+        #'ter': ter_score,
+        #'precision': precision_score,
+        #'recall': recall_score,
+        #'f1': f1_score,
+        #'seq_accuracy': seq_acc,
+        #'token_accuracy': token_acc,
         'perplexity': ppl
     }
 
@@ -136,7 +144,7 @@ def get_transformer_scheduler(optimizer, d_model, warmup_steps):
         return d_model ** (-0.5) * min(step ** (-0.5), step * warmup_steps ** (-1.5))
     return LambdaLR(optimizer, lr_lambda)
 
-def train_epoch(model, data_loader, optimizer, criterion, scheduler, device,tokenizer):
+def train_epoch(model, data_loader, optimizer, criterion, scheduler, tokenizer, accelerator):
     """
     Train the model for one epoch.
     
@@ -156,10 +164,21 @@ def train_epoch(model, data_loader, optimizer, criterion, scheduler, device,toke
     all_metrics = {}    
     steps = 0
 
+    # initialize accumulation steps for gradient accumulation
+    accumulation_steps = 4
+
+    device = accelerator.device
+
     for batch_idx, (src, tgt) in enumerate(data_loader):
         # Prepare input and target sequences for the decoder
         tgt_input = tgt[:, :-1]                                                     # Exclude the last token for decoder input
         tgt_output = tgt[:, 1:]                                                     # Shift the target sequence by one for the decoder output
+
+        # print statements for debugging
+        print(f"src shape: {src.shape}")
+        print(f"tgt shape: {tgt.shape}")
+        print(f"tgt_input shape: {tgt_input.shape}")
+        print(f"tgt_output shape: {tgt_output.shape}")
 
         # Generate masks
         src_mask = create_masked_padding(src)                                       # Masking for source input
@@ -168,6 +187,11 @@ def train_epoch(model, data_loader, optimizer, criterion, scheduler, device,toke
         tgt_padding_mask = tgt_padding_mask.to(device)                              # Move the padding mask to the device
         tgt_look_ahead_mask = tgt_look_ahead_mask.to(device)                        # Move the look-ahead mask to the device
         tgt_mask = tgt_padding_mask & tgt_look_ahead_mask                           # Combine padding and look-ahead masks
+        # Debugging print statements
+        print(f"tgt_mask shape: {tgt_mask.shape}")
+        print(f"tgt_padding_mask shape: {tgt_padding_mask.shape}")
+        print(f"tgt_look_ahead_mask shape: {tgt_look_ahead_mask.shape}")
+        print(f"src_mask shape: {src_mask.shape}")
 
         # Zero out the gradients before each forward pass
         optimizer.zero_grad()
@@ -176,26 +200,30 @@ def train_epoch(model, data_loader, optimizer, criterion, scheduler, device,toke
         print(f"Source shape: {src.shape}")                                         # adding print statements to check the shapes of the source input tensors
         print(f"Target input shape: {tgt_input.shape}")                             # adding print statements to check the shapes of the target input tensors
         output = model(src, tgt_input, src_mask, tgt_mask)
+        print(f"output shape: {output.shape}")
 
         # Compute the loss
-        loss = criterion(output.view(-1, output.size(-1)), tgt_output.view(-1))
-        total_loss += loss.item()
+        loss = criterion(output.reshape(-1, output.size(-1)), tgt_output.reshape(-1))
+        # normalize the loss by the accumulation steps
+        loss = loss / accumulation_steps
+        
+        # Backpropagation and optimization
+        accelerator.backward(loss, retain_graph=True)
+        if (batch_idx + 1) % accumulation_steps == 0:
+            optimizer.step()
+            scheduler.step()
+            optimizer.zero_grad()
+            steps = steps + 1
+        # accumulate the loss
+        total_loss = total_loss + loss.item() * accumulation_steps                             # adjut the total loss by the accumulation steps
 
         # Calculate metrics
         batch_metrics = calculate_metrics(output, tgt_output, tokenizer)
         for key, value in batch_metrics.items():
             all_metrics[key] = all_metrics.get(key, 0) + value
 
-        # Backpropagation and optimization
-        accelerator.backward(loss)
-        optimizer.step()
-        scheduler.step()
-        optimizer.zero_grad()
-
-        steps += 1
-
         # Log metrics every 100 batches
-        if batch_idx % 100 == 0:
+        if batch_idx % 10 == 0:
             wandb.log({f"train_{k}": v for k, v in batch_metrics.items()})
 
     # Calculate average metrics
@@ -208,7 +236,7 @@ def train_epoch(model, data_loader, optimizer, criterion, scheduler, device,toke
     return avg_loss, avg_metrics, steps
 
 
-def validate_epoch(model, data_loader, criterion, device, tokenizer):
+def validate_epoch(model, data_loader, criterion, tokenizer, accelerator):
     """
     Validate the model for one epoch (no gradient computation).
     
@@ -225,6 +253,8 @@ def validate_epoch(model, data_loader, criterion, device, tokenizer):
     model.eval()  # Set the model to evaluation mode
     total_loss = 0.0  # Initialize total validation loss
     all_metrics = {}
+
+    device = accelerator.device
 
     with torch.no_grad():  # Disable gradient computation for validation
         for src, tgt in data_loader:
@@ -302,16 +332,19 @@ def train(model, train_loader, val_loader, epochs, optimizer, criterion, tokeniz
     # set the device using the accelerator
     device = accelerator.device
 
+    # initialize best validation loss
     best_val_loss = float('inf')
     total_steps = 0
 
+    torch.autograd.set_detect_anomaly(True)
+
     for epoch in range(epochs):
         # Training for one epoch
-        train_loss, train_metrics, steps = train_epoch(model, train_loader, optimizer, criterion, scheduler, device, tokenizer)
+        train_loss, train_metrics, steps = train_epoch(model, train_loader, optimizer, criterion, scheduler, tokenizer, accelerator)
         total_steps += steps
         
         # Validation after each epoch
-        val_loss, val_metrics = validate_epoch(model, val_loader, criterion, device, tokenizer)
+        val_loss, val_metrics = validate_epoch(model, val_loader, criterion, tokenizer, accelerator)
 
         logger.info(f"epoch {epoch+1}/{epochs}")
         logger.info(f"train loss: {train_loss:.4f}, validation loss: {val_loss:.4f}")
@@ -355,7 +388,7 @@ if __name__ == "__main__":
         data_type="text",
         text_data=(train_src_data, train_tgt_data),  # Passing as a tuple for translation task
         tokenizer=tokenizer,
-        batch_size=32,
+        batch_size=8,
         max_len=128,
         shuffle=True,  # Shuffle training data
         is_translation=True  # Indicate that this is a translation task
@@ -390,7 +423,7 @@ if __name__ == "__main__":
         data_type="text",
         text_data=(src_data, tgt_data),  # Passing as a tuple for translation task
         tokenizer=tokenizer,
-        batch_size=32,
+        batch_size=4,
         max_len=128,
         shuffle=False,  # Usually, we don't shuffle validation data
         is_translation=True  # Indicate that this is a translation task

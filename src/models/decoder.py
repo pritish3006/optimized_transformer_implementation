@@ -3,6 +3,7 @@ import torch.nn as nn
 from .attention import MultiHeadAttention
 from .feed_forward import PositionwiseFeedForward
 from .embeddings import TransformerEmbedding
+from src.utils.helpers import initialize_weight
 
 class DecoderLayer(nn.Module):
     """
@@ -51,17 +52,17 @@ class DecoderLayer(nn.Module):
         """
         # masked self-attention for target sequence with residual connection
         self_attention_output, _ = self.self_attention(x, x, x, tgt_mask)               # output of multi-head self-attention mechanism
-        x += self.dropout(self_attention_output)                                        # apply dropout probability after attention layer
+        x = x + self.dropout(self_attention_output)                                        # apply dropout probability after attention layer
         x = self.layer_norm1(x)                                                         # apply layer normalization
 
         # cross-attention with encoder output (memory) with residual connection
         cross_attention_output, _ = self.cross_attention(x, memory, memory, memory_mask)
-        x += self.dropout(cross_attention_output)                                       # apply dropout probability after attention mechanism
+        x = x + self.dropout(cross_attention_output)                                       # apply dropout probability after attention mechanism
         x = self.layer_norm2(x)                                                         # apply layer normalization
 
         # apply position-wise feed-forward network with residual connection
         ff_output = self.feed_forward(x)
-        x += self.dropout(ff_output)                                                    # apply dropout probability after FFN layer
+        x = x + self.dropout(ff_output)                                                    # apply dropout probability after FFN layer
         x = self.layer_norm3(x)                                                         # apply layer normalization
 
         return x 
@@ -87,6 +88,9 @@ class Decoder(nn.Module):
         self.embedding = TransformerEmbedding(vocab_size, d_model, max_len, dropout)
         self.layers = nn.ModuleList([DecoderLayer(d_model, num_heads, d_ff, dropout) for _ in range(num_layers)])
         self.layer_norm = nn.LayerNorm(d_model)
+
+        # Initialize weights
+        self.apply(initialize_weight)
 
     def forward(self, tgt, memory, tgt_mask=None, memory_mask=None):
         """

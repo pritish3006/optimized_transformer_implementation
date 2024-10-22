@@ -1,5 +1,6 @@
 import torch
 import os
+import torch.nn as nn
 
 def create_masked_padding(seq, pad_token=0):
     """
@@ -14,7 +15,7 @@ def create_masked_padding(seq, pad_token=0):
     # creating a mask where true indicates positions that are padded tokens
     mask = (seq == pad_token).unsqueeze(1).unsqueeze(2)                     # shape: (batch_size, 1, 1, seq_len)
     print(f"mask shape in create_masked_padding: {mask.shape}")
-    return mask                                                             # trie where pad tokens are present (dtype torch.bool)
+    return mask                                                             # true where pad tokens are present (dtype torch.bool)
 
 def create_look_ahead_mask(size):
     """
@@ -52,3 +53,12 @@ def save_checkpoint(model, optimizer, epoch, loss, checkpoint_dir="checkpoints")
     }, checkpoint_path)
 
     print(f"checkpoint saved: {checkpoint_path}")                
+
+def initialize_weight(x):
+    if isinstance(x, nn.Linear):
+        nn.init.xavier_uniform_(x.weight)
+        if x.bias is not None:
+            nn.init.constant_(x.bias, 0)
+    elif isinstance(x, nn.LayerNorm):
+        nn.init.constant_(x.weight, 1.0)
+        nn.init.constant_(x.bias, 0)

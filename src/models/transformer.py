@@ -4,6 +4,7 @@ from .embeddings import TransformerEmbedding
 from .encoder import Encoder
 from .decoder import Decoder
 from .feed_forward import PositionwiseFeedForward
+from src.utils.helpers import initialize_weight
 
 class Transformer(nn.Module):
     """
@@ -31,6 +32,9 @@ class Transformer(nn.Module):
         self.decoder = Decoder(num_decoder_layers, d_model, num_heads, d_ff, tgt_vocab_size, max_len, dropout)      # decoder layer
         self.linear = nn.Linear(d_model, tgt_vocab_size)                                                            # final linear layer for output logits
         self.softmax = nn.Softmax(dim=1)                                                                            # softmax for generating token probabilities
+
+        # Initialize weights
+        self.apply(initialize_weight)
 
     def forward(self, src, tgt, src_mask=None, tgt_mask=None, memory_mask=None):
         """

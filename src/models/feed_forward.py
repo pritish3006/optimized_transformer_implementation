@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn 
 import logging
+from src.utils.helpers import initialize_weight
 
 # setup logging
 logging.basicConfig(level=logging.INFO)
@@ -26,6 +27,9 @@ class PositionwiseFeedForward(nn.Module):
         self.linear2 = nn.Linear(d_ff, d_model)
         self.dropout = nn.Dropout(p=dropout)
 
+        # Initialize weights
+        self.apply(initialize_weight)
+
     def forward(self, x):
         """
         forward pass through the feed-forward network
@@ -49,5 +53,6 @@ class PositionwiseFeedForward(nn.Module):
 
         return x
     
+
 
 

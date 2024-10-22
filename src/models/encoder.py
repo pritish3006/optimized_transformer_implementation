@@ -4,6 +4,7 @@ import torch.nn as nn
 from .attention import MultiHeadAttention
 from .feed_forward import PositionwiseFeedForward
 from .embeddings import TransformerEmbedding
+from src.utils.helpers import initialize_weight
 
 class EncoderLayer(nn.Module):
     """
@@ -45,12 +46,12 @@ class EncoderLayer(nn.Module):
         print(f"Input shape: {x.shape}")
         attention_output, _ = self.self_attention(x, x, x, mask)
         print(f"Attention output shape: {attention_output.shape}")
-        x += self.dropout(attention_output)                             # apply dropout
+        x = x + self.dropout(attention_output)                             # apply dropout - changed from += to + to avoid inplace operation
         x = self.layer_norm1(x)                                         # apply layer normalization
 
         # apply position-wise feed-forward network with residual connections
         ff_output = self.feed_forward(x)
-        x += self.dropout(ff_output)                                    # apply dropout
+        x = x + self.dropout(ff_output)                                    # apply dropout - changed from += to + to avoid inplace operation
         x = self.layer_norm2(x)                                         # apply layer normalization
 
         return x
@@ -76,6 +77,9 @@ class Encoder(nn.Module):
         self.layers = nn.ModuleList([EncoderLayer(d_model, num_heads, d_ff, dropout) for _ in range(num_layer)])
         self.layer_norm = nn.LayerNorm(d_model)
 
+        # Initialize weights
+        self.apply(initialize_weight)
+
     def forward(self, src, mask=None):
         """
         forward pass through the encoder stack
@@ -89,5 +93,7 @@ class Encoder(nn.Module):
         print(f"Embedding output shape: {x.shape}")
         for layer in self.layers:
             x = layer(x, mask)
+        print(f"Output shape after encoder layers: {x.shape}")
+        print(f"Output shape after layer norm: {self.layer_norm(x).shape}")
         return self.layer_norm(x)
     
