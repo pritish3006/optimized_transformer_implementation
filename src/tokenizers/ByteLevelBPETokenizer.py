@@ -40,7 +40,7 @@ class ByteLevelBPETokenizer:
         # store the configurations
         self.vocab_size = vocab_size
         self.min_frequency = min_frequency
-        self.metrics: Dict[str, float] = {}
+        self._metrics: Dict[str, float] = {}
 
     def train(self,
             files: Union[str, List[str], Dict[str, List[str]]],
@@ -54,6 +54,7 @@ class ByteLevelBPETokenizer:
             output_dir: directory to save the trained tokenizer
             validation_file: (optional) path to the validation file.
         """
+        # Initialize training files
         files = [files] if isinstance(files, (str, Path)) else files
         files = [str(Path(f)) for f in files]
 
@@ -62,17 +63,21 @@ class ByteLevelBPETokenizer:
             if not Path(file).exists():
                 raise FileNotFoundError(f"File not found: {file}")
 
+        # Initialize validation files if provided
+        if validation_file is not None:
+            validation_files = [validation_file] if isinstance(validation_file, (str, Path)) else validation_file
+            validation_files = [str(Path(f)) for f in validation_files]
+            
+            # Verify validation files exist
+            for file in validation_files:
+                if not Path(file).exists():
+                    raise FileNotFoundError(f"validation file not found: {file}")
+
         # train the tokenizer
         trainer = trainers.BpeTrainer(
             vocab_size=self.vocab_size,
             min_frequency=self.min_frequency,
-            special_tokens=["<bos>",                                                                # beginning of sentence tokens
-                            "<pad>",                                                                # padding tokens
-                            "<eos>",                                                                # end of sentence tokens
-                            "<unk>",                                                                # unknown tokens not in the vocabulary
-                            "<en>",                                                                 # english language tokens
-                            "<hi>"                                                                  # hindi language tokens
-                            ]
+            special_tokens=["<bos>", "<pad>", "<eos>", "<unk>", "<en>", "<hi>"]
         )
 
         self.tokenizer.train(files, trainer)
@@ -81,14 +86,7 @@ class ByteLevelBPETokenizer:
         self.save(output_dir)
 
         # compute the validation metrics if validation file is provided
-        if validation_files:
-            validation_files = [validation_files] if isinstance(validation_files, (str, Path)) else validation_files
-            validation_files = [str(Path(f)) for f in validation_files]
-
-            for file in validation_files:
-                if not Path(file).exists():
-                    raise FileNotFoundError(f"validation file not found: {file}")
-
+        if validation_file is not None:
             self._compute_metrics(validation_files)
 
     def _compute_metrics(self, files: List[str]) -> None:
@@ -138,4 +136,30 @@ class ByteLevelBPETokenizer:
         """return the current validation metrics"""
         return self._metrics.copy()
     
+    def update_metrics(self, new_metrics: Dict[str, float]) -> None:
+        """Update the metrics with new values."""
+        self._metrics.update(new_metrics)
     
+    def get_vocab(self) -> Dict[str, int]:
+        """
+        Get the vocabulary mapping from tokens to ids.
+        
+        Returns:
+            Dict[str, int]: A dictionary mapping tokens to their corresponding ids
+        """
+        return self.tokenizer.get_vocab()
+    
+    @property
+    def vocab_size(self) -> int:
+        """
+        Get the current size of the vocabulary.
+        
+        Returns:
+            int: The number of tokens in the vocabulary
+        """
+        return len(self.tokenizer.get_vocab())
+
+    @vocab_size.setter
+    def vocab_size(self, value: int) -> None:
+        """set the vocabulary size"""
+        self.tokenizer.set_vocab_size(value)

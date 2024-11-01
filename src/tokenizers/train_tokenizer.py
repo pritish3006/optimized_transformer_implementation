@@ -1,93 +1,15 @@
 from pathlib import Path
+import os
 import numpy as np
 import json
 from datetime import datetime
 import time
 from typing import Dict, Any, List, Tuple
-import tqdm
-from .ByteLevelBPETokenizer import ByteLevelBPETokenizer
-from .TextPreprocessor import TextPreprocessor
+from tqdm import tqdm 
+from ByteLevelBPETokenizer import ByteLevelBPETokenizer
+from TextPreProcessor import TextPreprocessor
 import wandb
 from dataclasses import dataclass
-
-class TokenizerTrainer:
-    """train a tokenizer"""
-    
-    def __init__(self,
-                data_dir: str = "/Datasets/raw/en-hi",
-                output_dir: str = "Datasets/processed/en-hi",
-                tokenizer_dir: str = "tokenizer",
-                vocab_size: int = 350000,
-                min_frequency: int = 5             
-    ):
-        self.data_dir = Path(data_dir)
-        self.output_dir = Path(output_dir)
-        self.tokenizer_dir = Path(tokenizer_dir)
-        self.vocab_size = vocab_size
-        self.min_frequency = min_frequency
-
-        # create output directory
-        self.tokenizer_dir.mkdir(parents=True, exist_ok=True)
-        
-        # initialize the preprocessor and tokenizer
-        self.preprocessor = TextPreprocessor()
-        self.tokenizer = ByteLevelBPETokenizer.for_translation(
-            source_lang="en",
-            target_lang="hi",
-            vocab_size=self.vocab_size,
-            min_frequency=self.min_frequency
-        )
-
-        # initialize the metrics
-        self.metrics: Dict[str, Any] = {}
-
-    def train(self):
-        """run the complete training pipeline"""
-        processed_files, prep_stats = preprocess_opus_data(
-            data_dir=self.data_dir,
-            output_dir=self.output_dir
-        )
-
-        # train the tokenizer
-        train_files = [
-            str(processed_files['train'][0]),   
-            str(processed_files['train'][1])
-        ]
-
-        validation_files = [
-            str(processed_files['dev'][0]),
-            str(processed_files['dev'][1])
-        ]
-
-        self.tokenizer.train(
-            files=train_files,
-            output_dir=str(self.tokenizer_dir),
-            validation_files=validation_files
-        )
-
-        # compute and save the metrics
-        self.metrics = {
-            'preprocessing': prep_stats,
-            'tokenizer': self.tokenizer.get_metrics,
-            'training_info': {
-                'vocab_size': self.vocab_size,
-                'min_frequency': self.min_frequency,
-                'timestamp': datetime.now().isoformat(),
-                'data_files': {
-                    'train': [str(f) for f in processed_files['train']],
-                    'dev': [str(f) for f in processed_files['dev']],
-                    'test': [str(f) for f in processed_files['test']]
-                }
-            }
-        }
-
-        # save the metrics
-        metrics_file = self.tokenizer_dir / 'train_tokenizer_metrics.json'
-        with open(metrics_file, 'w') as f:
-            json.dump(self.metrics, f, indent=2)
-        return self.metrics
-        
-        print(f"Tokenizer training completed. Metrics saved to {metrics_file}")
 
 @dataclass
 class HPRange:
@@ -199,7 +121,7 @@ class TokenizerHPTuner:
         unknown_count = 0
         total_tokens = 0
         sequence_lengths = []
-        vocab_size = len(tokenizer.get_vocab())
+        vocab_size = len(tokenizer.vocab)
 
         # process validation files
         with open(en_file, 'r', encoding='utf-8') as f_en, open(hi_file, 'r', encoding='utf-8') as f_hi:
@@ -226,17 +148,30 @@ class TokenizerHPTuner:
             'vocabulary_utilization': vocab_size / tokenizer.vocab_size
         }
                 
+    def _train_tokenizer(self, params: Dict[str, int], train_files: Tuple[Path, Path], temp_dir: Path) -> ByteLevelBPETokenizer:
+        """Train tokenizer with given parameters"""
+        tokenizer = ByteLevelBPETokenizer(
+            vocab_size=params['vocab_size'],
+            min_frequency=params['min_frequency']
+        )
+        
+        tokenizer.train(
+            files=[str(f) for f in train_files],
+            output_dir=str(temp_dir)
+        )
+        return tokenizer
+
     def tune(self) -> Dict:
         """Perform hyperparameter tuning using random search"""
         trial_start_time = time.time()
         train_files = (
-            self.output_dir / 'opus.en-hi-train.en',
-            self.output_dir / 'opus.en-hi-train.hi'
+            self.data_dir / 'opus.en-hi-train.en',
+            self.data_dir / 'opus.en-hi-train.hi'
         )
 
         val_files = (
-            self.output_dir / 'opus.en-hi-dev.en',
-            self.output_dir / 'opus.en-hi-dev.hi'
+            self.data_dir / 'opus.en-hi-dev.en',
+            self.data_dir / 'opus.en-hi-dev.hi'
         )
 
         # sample hyperparameter combinations
@@ -244,21 +179,11 @@ class TokenizerHPTuner:
 
         # try combinations
         for trial, params in enumerate(tqdm(combinations, desc="Tuning hyperparameters")):
-            # create and train tokenizer
-            tokenizer = ByteLevelBPETokenizer.for_translation(
-                source_lang="en",
-                target_lang="hi",
-                **params
-            )
-
-            # train on training files
+            # Step 1: Train
             temp_dir = self.tokenizer_dir / f"temp_{trial}"
-            tokenizer.train(
-                files=[str(f) for f in train_files],
-                output_dir=str(temp_dir)
-            )
-
-            # evaluate 
+            tokenizer = self._train_tokenizer(params, train_files, temp_dir)
+            
+            # Step 2: Evaluate using existing method
             metrics = self.evaluate_tokenizer(tokenizer, val_files)
 
             # caluclate the score (lower is better)
@@ -406,16 +331,23 @@ class TokenizerHPTuner:
 
 
 if __name__ == "__main__":
+    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     early_stopping_config = EarlyStoppingConfig(patience=5, min_improvement=0.01, min_trials=5)
     tuner = TokenizerHPTuner(
-        data_dir="/Datasets/raw/en-hi",
-        output_dir="/Datasets/processed/en-hi",
-        tokenizer_dir="/tokenizer",
+        data_dir=os.path.join(project_root, "Datasets", "raw", "en-hi"),
+        output_dir=os.path.join(project_root, "Datasets", "processed", "en-hi"),
+        tokenizer_dir=os.path.join(project_root, "tokenizers", "tokenizer"),
         n_trials=10,
         project_name="tokenizer_tuning",
         early_stopping_config=early_stopping_config
-        )
+    )
     
+    # debug prints to verify the paths
+    print(f"Project Root: {project_root}")
+    print(f"Expected Input Data directory: {tuner.data_dir}")
+    print(f"Expected Output Data directory: {tuner.output_dir}")
+    print(f" Tokenizer directory: {tuner.tokenizer_dir}")
+
     best_params = tuner.tune()
     print("\nTuning complete!")
     print(f"Best parameters found (score: {tuner.best_results['score']:.4f}):")
